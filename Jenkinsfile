@@ -1,0 +1,149 @@
+//  Archivo Jenkinsfile para api-template
+//
+//  by:
+
+
+pipeline {
+  options {
+      timeout(time: 20, unit: 'MINUTES')
+  }
+  agent {
+    kubernetes {
+      defaultContainer 'jnlp'
+      yaml """
+apiversion: v1
+kind: Pod
+metadata:
+  labels:
+    component: ci
+spec:
+  volumes:  
+  - name: dockersock
+    hostPath:
+      path: "/var/run/docker.sock"
+  - name: docker
+    hostPath:
+      path: "/usr/bin/docker"
+  - name: google-cloud-key
+    secret:
+      secretName: token-jenk
+  containers:
+  - name: gcloud
+    image: gcr.io/cloud-builders/gcloud
+    volumeMounts:
+    - name: google-cloud-key
+      readOnly: true
+      mountPath: "/var/secrets/google"
+    env:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /var/secrets/google/key.json
+    - name: docker
+      mountPath: "/usr/bin/docker"
+    - name: dockersock
+      mountPath: "/var/run/docker.sock"
+    command:
+    - cat
+    env:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /var/secrets/google/key.json
+    tty: true
+  - name: docker
+    image: docker:18.09
+    volumeMounts:
+    - name: google-cloud-key
+      readOnly: true
+      mountPath: "/var/secrets/google"
+    - name: docker
+      mountPath: "/usr/bin/docker"
+    - name: dockersock
+      mountPath: "/var/run/docker.sock"
+    command:
+    - cat
+    env:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /var/secrets/google/key.json
+    tty: true
+"""
+    }
+  }
+  stages {
+    stage('Initialize') {
+      steps {
+        container('gcloud') {
+          sh 'gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS'
+        }
+      }
+    }
+    stage('Build') {
+      steps {
+        container('gcloud') {
+          echo 'construccion'
+        }
+      }
+    }
+    stage('Build-Image'){
+      steps {
+        container('docker') {
+          echo 'crear imagen'
+        }
+      }
+    }
+    stage('Publish-Image'){
+      steps {
+        container('gcloud') {
+          echo 'publicar imagen'
+        }
+      }
+    }
+
+    stage('Deploy develop') {
+      // Developer Branches
+      when { branch pattern: "feature.*|develop.*", comparator: "REGEXP"}
+      steps {
+        container('gcloud') {
+          echo 'develop'
+        }
+      }
+    }
+    stage('Deploy Staging') {
+      // Developer Branches
+      when { branch pattern: "release.*|staging.*|hotfix.*", comparator: "REGEXP"}
+      steps {
+        container('kubectl') {
+          echo 'QA'
+        }
+      }
+    }
+    stage ('Aprobacion Produccion') {
+      when { branch 'master' }
+      steps {
+        timeout(time:2, unit:'DAYS'){
+            input message: 'Aprueba Despliegue Ambiente Produccion?',
+            submitter: 'DevOps'
+        }
+      }
+    }
+    stage ('Deploy Produccion') {
+      when { branch 'master' }
+      steps {
+        container('kubectl') {
+          echo 'produccion'
+        }
+      }
+    }
+  }
+  post {
+    always {
+      echo 'Pipeline Finalizado'
+    }
+    aborted{
+      echo 'El Pipeline ha sido cancelado'
+    }
+    failure {
+      echo 'Pipeline Fallo'
+    }
+    success {
+      echo 'Pipeline Exitoso!!'
+    }
+  }
+}
